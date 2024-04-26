@@ -68,10 +68,10 @@ STN_BULLETS= {'Lougheed Stn': ['expo', 'mil'],
              }
 
 NIGHTBUS_COLOUR = (0, 12, 66)
-RB_COLOUR       = (22, 164, 72)
+RB_COLOUR       = (0, 133, 34)
 
-LINE_COLOURS={'99': (221, 128, 49),
-              '099': (221, 128, 49),
+LINE_COLOURS={'99': (208, 65, 16),
+              '099': (208, 65, 16),
               'R1': RB_COLOUR,
               'R2': RB_COLOUR,
               'R3': RB_COLOUR,
