@@ -9,12 +9,14 @@ class system_t(Enum):
 GTFS = {}
 
 print("INITALIZING GTFS DATABASE")
-print("reading TransLink data...")
 tl_gtfs_dir = os.environ.get('RETRACEIT_TRANSLINK_GTFSDIR')
-tl_gtfs = ct.read_gtfs_data(tl_gtfs_dir)
-with open(os.path.join(tl_gtfs_dir, 'stops.txt')) as fp:
-    _, tl_stops = ct.read_gtfs_stops(fp)
-GTFS[system_t.TRANSLINK] = (*tl_gtfs, tl_stops)
+if tl_gtfs_dir:
+    print("reading TransLink data...")
+    tl_gtfs = rt.read_gtfs_data(tl_gtfs_dir)
+    with open(os.path.join(tl_gtfs_dir, 'stops.txt')) as fp:
+        _, tl_stops = rt.read_gtfs_stops(fp)
+    GTFS[system_t.TRANSLINK] = (*tl_gtfs, tl_stops)
+
 bot = discord.Bot()
 
 print("DATABASE INIT COMPLETE")
