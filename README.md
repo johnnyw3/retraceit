@@ -1,6 +1,7 @@
 # Retraceit
 A beautiful way to analyze your transit usage.
-<img src="img/header.png" width="30%" alt="example image"/>
+
+<img src="img/header.png" width="50%" alt="example image"/>
 
 # Prerequisites
 ## Dependencies
