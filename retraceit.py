@@ -361,13 +361,14 @@ def top_counts_text(fp, gtfs_dir, width = 30):
    top_counts, lines, _, stops = calc_top_counts(fp, gtfs_dir)
    print_top_counts(top_counts, stops, width)
 
-def top_counts_img(fp, gtfs_dir, width = 1000, num = 14, out_fname = 'out.png'):
-   return gen_img(*calc_top_counts(fp, gtfs_dir), width = width, num = num, out_fname=out_fname)
+def top_counts_img(fp, gtfs_dir, width = 1000, num = 14):
+   return gen_img(*calc_top_counts(fp, gtfs_dir), width = width, num = num)
 
 def gen_img(top_counts, lines, counts, stops, width = 1000, num = 14, 
             is_desc = True, title = 'Top Transit Stops', 
-            category_title = 'Stops used', out_fname = 'out.png'):
-
+            category_title = 'Stops used') -> Image:
+   '''
+   '''
    # bullets should be 54x54px
    img_dir= os.environ.get("RETRACEIT_IMGDIR")
    expo   = Image.open(os.path.join(img_dir, "expo.png"))
@@ -388,7 +389,7 @@ def gen_img(top_counts, lines, counts, stops, width = 1000, num = 14,
    logo_path = os.environ.get("RETRACEIT_HEADER_LOGO")
    header_text_xpos = 20
    if logo_path: 
-       logo       = Image.open(INSERT_LOGO_HERE)
+       logo       = Image.open(logo_path)
        logo_sized = logo.resize((160, 160))
        img.alpha_composite(logo_sized, dest=(0, 0))
        header_text_xpos += 160
@@ -436,8 +437,7 @@ def gen_img(top_counts, lines, counts, stops, width = 1000, num = 14,
            d.text( (text_xpos, ypos), stop_name, font=fnt, fill='white')
        idx += 1
 
-   img.save(out_fname)
-   return out_fname
+   return img
 
 def top_month_counts(fp):
    trips = load_csv(fp)

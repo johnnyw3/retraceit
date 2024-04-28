@@ -1,4 +1,4 @@
-import discord, urllib, os
+import discord, urllib, os, io
 from enum import Enum
 from datetime import datetime
 import retraceit as rt
@@ -16,10 +16,10 @@ if tl_gtfs_dir:
     with open(os.path.join(tl_gtfs_dir, 'stops.txt')) as fp:
         _, tl_stops = rt.read_gtfs_stops(fp)
     GTFS[system_t.TRANSLINK] = (*tl_gtfs, tl_stops)
+print("DATABASE INIT COMPLETE")
 
 bot = discord.Bot()
 
-print("DATABASE INIT COMPLETE")
 
 @bot.slash_command()
 async def test(ctx):
@@ -30,7 +30,14 @@ async def gen_stop_stats(ctx, num: discord.Option(input_type=int, description="t
    await ctx.response.defer()
    contents = await compass_history_csv.read()
    contents = contents.decode('utf-8')
-   fname = rt.top_counts_img(contents, GTFS[system], width=int(img_width), num=int(num))
-   await ctx.followup.send("Your generated image:", file=discord.File(fname))
+
+   img = rt.top_counts_img(contents, GTFS[system], width=int(img_width), num=int(num))
+   fp = io.BytesIO()
+   img.save(fp, format='png')
+
+   # seek to beginning of saved image data
+   fp.seek(0)
+   await ctx.followup.send("Your generated image:", file=discord.File(fp, filename='stop_stats.png'))
+   fp.close()
 
 bot.run(os.environ.get("RETRACEIT_TOKEN"))
