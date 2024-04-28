@@ -1,5 +1,6 @@
 import re, datetime, os, io
 from PIL import Image, ImageDraw, ImageFont
+from enum import Enum
 
 MON_TO_NUM = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6, 
               'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
@@ -89,6 +90,48 @@ LINE_COLOURS={'99': (208, 65, 16),
               'N24': NIGHTBUS_COLOUR,
               'N35': NIGHTBUS_COLOUR,
              }
+
+class system_t(Enum):
+    TRANSLINK = 0
+
+class retraceit_db:
+   def __init__(self):
+        self.gtfs = {}
+
+        print("INITALIZING GTFS DATABASE")
+        tl_gtfs_dir = os.environ.get('RETRACEIT_TRANSLINK_GTFSDIR')
+        if tl_gtfs_dir:
+            print("reading TransLink data...")
+            tl_gtfs = read_gtfs_data(tl_gtfs_dir)
+            with open(os.path.join(tl_gtfs_dir, 'stops.txt')) as fp:
+                _, tl_stops = read_gtfs_stops(fp)
+            self.gtfs[system_t.TRANSLINK] = (*tl_gtfs, tl_stops)
+
+        print("LOADING ROUTE BULLETS")
+        # bullets should be 54x54px
+        self.bullets = {}
+        img_dir = os.environ.get("RETRACEIT_IMGDIR")
+        for bullet_fname in os.listdir(img_dir):
+            bullet_name, ext = os.path.splitext(bullet_fname)
+            if ext != '.png' and ext != '.jpg':
+                continue
+            self.bullets[bullet_name] = Image.open(os.path.join(img_dir, bullet_fname))
+
+        print("LOADING FONTS")
+        fnt_file = os.environ.get("RETRACEIT_FNTFILE")
+        assert os.path.exists(fnt_file)
+        self.fnt = ImageFont.truetype(fnt_file, 40)
+        self.title_fnt = ImageFont.truetype(fnt_file, 60)
+
+        logo_path = os.environ.get("RETRACEIT_HEADER_LOGO")
+        if logo_path:
+            print("LOADING HEADER LOGO")
+            logo       = Image.open(logo_path)
+            logo_sized = logo.resize((160, 160))
+            self.logo = logo_sized
+
+        print("DATABASE INIT COMPLETE")
+
 
 def grab_csv_lines(fp) -> list[str]:
     '''
@@ -361,45 +404,29 @@ def top_counts_text(fp, gtfs_dir, width = 30):
    top_counts, lines, _, stops = calc_top_counts(fp, gtfs_dir)
    print_top_counts(top_counts, stops, width)
 
-def top_counts_img(fp, gtfs_dir, width = 1000, num = 14):
-   return gen_img(*calc_top_counts(fp, gtfs_dir), width = width, num = num)
+def top_counts_img(fp, db: retraceit_db, width = 1000, num = 14):
+   return gen_img(*calc_top_counts(fp, db.gtfs[system_t.TRANSLINK]), db, width = width, num = num)
 
-def gen_img(top_counts, lines, counts, stops, width = 1000, num = 14, 
+def gen_img(top_counts, lines, counts, stops, db, width = 1000, num = 14,
             is_desc = True, title = 'Top Transit Stops', 
             category_title = 'Stops used') -> Image:
    '''
    '''
-   # bullets should be 54x54px
-   img_dir= os.environ.get("RETRACEIT_IMGDIR")
-   expo   = Image.open(os.path.join(img_dir, "expo.png"))
-   canada = Image.open(os.path.join(img_dir, "canada.png"))
-   mil    = Image.open(os.path.join(img_dir, "mil.png"))
-   wce    = Image.open(os.path.join(img_dir, "wce.png"))
-   seabus = Image.open(os.path.join(img_dir, "seabus.png"))
-   bullets = {'expo': expo, 'canada': canada, 'mil': mil, "wce": wce, "seabus": seabus}
-
    height = 160+60*num if num < len(top_counts) else 160+60*len(top_counts)
    img = Image.new('RGBA', (width, height), color=(0, 52, 86))
    d = ImageDraw.Draw(img)
 
-   fnt_file = os.environ.get("RETRACEIT_FNTFILE")
-   fnt = ImageFont.truetype(fnt_file, 40)
-   title_fnt = ImageFont.truetype(fnt_file, 60)
-
-   logo_path = os.environ.get("RETRACEIT_HEADER_LOGO")
    header_text_xpos = 20
-   if logo_path: 
-       logo       = Image.open(logo_path)
-       logo_sized = logo.resize((160, 160))
-       img.alpha_composite(logo_sized, dest=(0, 0))
+   if db.logo:
+       img.alpha_composite(db.logo, dest=(0, 0))
        header_text_xpos += 160
 
-   d.text( (header_text_xpos, 10), title, font=title_fnt, fill='white')
+   d.text( (header_text_xpos, 10), title, font=db.title_fnt, fill='white')
 
    total_taps = sum([counts[stop] for stop in counts])
    category_text = '; %s: %s' % (category_title, len(top_counts)) if category_title else ''
    d.text( (header_text_xpos, 90), "Taps: %s%s" % (total_taps, category_text),
-                      font=fnt, fill='white')
+                      font=db.fnt, fill='white')
 
    idx = 1
    top_cnt = top_counts[0][1] if is_desc else max([cnt for stop, cnt in top_counts])
@@ -408,13 +435,13 @@ def gen_img(top_counts, lines, counts, stops, width = 1000, num = 14,
        stop_name = stops[stop] if stop in stops else stop
        ypos = 100+60*idx
        d.rectangle( (0, ypos, cnt/top_cnt*width, ypos+60 ), fill=(30, 82, 116))
-       d.text( (width-100, ypos), "%3d" % (cnt), font=fnt, fill='white')
+       d.text( (width-100, ypos), "%3d" % (cnt), font=db.fnt, fill='white')
 
        if stop_name in STN_BULLETS:
            text_xpos = 20 + len(STN_BULLETS[stop_name])*60
 
            for bullet_idx, bullet in enumerate(STN_BULLETS[stop_name]):
-               img.alpha_composite(bullets[bullet], dest=(10+60*bullet_idx, ypos))
+               img.alpha_composite(db.bullets[bullet], dest=(10+60*bullet_idx, ypos))
 
        elif stop in lines:
            text_xpos = 20 + len(lines[stop])*76
@@ -423,18 +450,18 @@ def gen_img(top_counts, lines, counts, stops, width = 1000, num = 14,
                rect_colour = LINE_COLOURS[rt_num] if rt_num in LINE_COLOURS else (99, 130, 161)
 
                d.rectangle( (rt_box_xpos, ypos, rt_box_xpos+72, ypos+54 ), fill=rect_colour)
-               d.multiline_text((rt_box_xpos+37, ypos+25), str(rt_num), font=fnt,
+               d.multiline_text((rt_box_xpos+37, ypos+25), str(rt_num), font=db.fnt,
                                 fill='white', align='center', anchor='mm')
        else:
            text_xpos = 10
 
-       stop_text_len = d.textlength(stop_name, font=fnt)
+       stop_text_len = d.textlength(stop_name, font=db.fnt)
        while (text_xpos + stop_text_len > width-110 and len(stop_name) > 3):
            stop_name = stop_name[:-4] + '...'
-           stop_text_len = d.textlength(stop_name, font=fnt)
+           stop_text_len = d.textlength(stop_name, font=db.fnt)
            
        if stop_name != '...':
-           d.text( (text_xpos, ypos), stop_name, font=fnt, fill='white')
+           d.text( (text_xpos, ypos), stop_name, font=db.fnt, fill='white')
        idx += 1
 
    return img
@@ -449,9 +476,9 @@ def top_month_counts_text(fp, width = 10):
    top_counts, _ = top_month_counts(fp)
    print_top_counts(top_counts, width = width)
 
-def top_month_counts_img(fp, width = 800, out_fname = 'out.png'):
+def top_month_counts_img(fp, db, width = 800, out_fname = 'out.png'):
    top_counts, counts = top_month_counts(fp)
-   gen_img(top_counts, {}, counts, {}, width = width, num=len(counts), 
+   gen_img(top_counts, {}, counts, {}, db, width = width, num=len(counts), 
            is_desc=False, title = "Taps by Month", category_title='Months',
            out_fname=out_fname)
 
@@ -461,9 +488,9 @@ def top_hr_counts(fp, width = 30):
    top_counts = sorted(list(counts.items()))
    print_top_counts(top_counts, width = width)
 
-def top_hr_counts_img(fp, width = 800, out_fname = 'out.png'):
+def top_hr_counts_img(fp, db, width = 800, out_fname = 'out.png'):
    trips = load_csv(fp)
    counts = get_hr_counts(trips)
    top_counts = [(str(hr), cnt) for hr, cnt in sorted(list(counts.items()))]
-   gen_img(top_counts, {}, counts, {}, width = width, num=24, is_desc=False,
+   gen_img(top_counts, {}, counts, {}, db, width = width, num=24, is_desc=False,
            title='Taps by Hour', category_title=None, out_fname=out_fname)
