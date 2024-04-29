@@ -1,4 +1,4 @@
-import re, datetime, os, io
+import re, datetime, os, io, gtfs
 from PIL import Image, ImageDraw, ImageFont
 from enum import Enum
 
@@ -102,10 +102,7 @@ class retraceit_db:
         tl_gtfs_dir = os.environ.get('RETRACEIT_TRANSLINK_GTFSDIR')
         if tl_gtfs_dir:
             print("reading TransLink data...")
-            tl_gtfs = read_gtfs_data(tl_gtfs_dir)
-            with open(os.path.join(tl_gtfs_dir, 'stops.txt')) as fp:
-                _, tl_stops = read_gtfs_stops(fp)
-            self.gtfs[system_t.TRANSLINK] = (*tl_gtfs, tl_stops)
+            self.gtfs[system_t.TRANSLINK] = gtfs.read_gtfs_data(tl_gtfs_dir)
 
         print("LOADING ROUTE BULLETS")
         # bullets should be 54x54px
@@ -132,157 +129,13 @@ class retraceit_db:
 
         print("DATABASE INIT COMPLETE")
 
-
-def grab_csv_lines(fp) -> list[str]:
-    '''
-    parse lines from csv, skipping newlines in quotes
-        - fp may be either a file pointer, or a string containing the text of a 
-          csv file
-    '''
-    contents = fp.read() if type(fp) == io.TextIOWrapper else fp
-    flen = len(contents)
-    idx = next_newline = 0
-    inverb = False
-
-    results = []
-
-    while idx < flen:
-        cur_idx = idx 
-
-        while (inverb or next_newline <= idx) and (next_newline != flen or next_quote != flen):
-            next_newline = contents.find("\n", cur_idx)
-            if next_newline == -1: next_newline = flen
-            next_quote = contents.find('"', cur_idx)
-            if next_quote == -1: next_quote = flen
-            inverb = not inverb if next_quote <= next_newline and next_quote < flen else inverb
-            cur_idx = min(next_quote, next_newline) +1
-
-        results.append(contents[idx:next_newline])
-
-        idx = next_newline + 1
-
-    return results
-    
-def get_stop_lines_dict(routes, trips, stops, stoptimes, include_dropoff_only=False):
-    '''
-    Build and return a dict mapping stops to the routes that stop at them.
-        - set include_dropoff_only to include stops tagged as "dropoff only" in
-          the gtfs. Useful for mapping possible tap locations in a system
-          without exit taps
-    '''
-    results = {}
-
-    for stop_time in stoptimes:
-        t_id, _, _, stop_id, _, _, _, _ = stop_time 
-        stop_code = stops[stop_id][0]
-        trip = trips[t_id]
-        rt_id = trip[0]
-        rt = routes[rt_id][0]
-
-        if include_dropoff_only or not is_dropoff_only(stop_time):
-            if stop_code not in results:
-                results[stop_code] = set()
-            results[stop_code].add(rt)
-        
-    results = {stop_code: sorted(results[stop_code]) for stop_code in results}
-    return results
-
-def read_gtfs_data(gtfs_dir):
-    '''
-    '''
-    print("reading gtfs data: %s" % (gtfs_dir))
-    with open(os.path.join(gtfs_dir, 'routes.txt')) as rts_fp:
-        routes = get_routes_dict(rts_fp)
-
-    with open(os.path.join(gtfs_dir, 'trips.txt')) as trips_fp:
-        trips = get_trips_dict(trips_fp)
-
-    with open(os.path.join(gtfs_dir, 'stops.txt')) as stops_fp:
-        stops, _ = read_gtfs_stops(stops_fp)
-
-    with open(os.path.join(gtfs_dir, 'stop_times.txt')) as stoptms_fp:
-        stoptimes = get_stoptimes(stoptms_fp)
-
-    print("finished reading gtfs data in %s" % (gtfs_dir))
-    return routes, trips, stops, stoptimes
-
-
-def get_routes_dict(fp):
-    '''
-    '''
-    results = {}
-
-    for line in grab_csv_lines(fp)[1:]:
-        rt_id, _, rt_num, rt_name, _, rt_type, _, rt_color, rt_txt_colour = line.split(',')
-
-        results[rt_id] = (rt_num, rt_name, rt_type, rt_color, rt_txt_colour)
-
-    return results
-
-
-def get_trips_dict(fp):
-    '''
-    '''
-    results = {}
-
-    for line in grab_csv_lines(fp)[1:]:
-        rt_id, s_id, t_id, t_headsign, _, direction, block_id, shape_id, wheelchair, bike = line.split(',')
-
-        results[t_id] = (rt_id, s_id, block_id, shape_id, direction, shape_id, wheelchair, bike)
-
-    return results
-
-def get_stoptimes(fp):
-    '''
-    Read a GTFS stop_times.txt file, returning a 
-    '''
-    results = []
-    
-    # skip file header
-    fp.readline()
-
-    for line in fp:
-        line = line.strip()
-        t_id, arr_time, dep_time, stop_id, stop_seq, _, pickup, dropoff, dist = line.split(',')
-        
-        results.append( (t_id, arr_time, dep_time, stop_id, stop_seq, pickup, dropoff, dist) )
-
-    return results
-
-def is_dropoff_only(stoptime_tuple):
-    '''
-    Returns True if the stop tim specified by the given stoptime_tuple is
-    dropoff only, else False
-    '''
-    return stoptime_tuple[5] == '1' and stoptime_tuple[6] != '1'
-
-def read_gtfs_stops(fp) -> (dict[str, tuple[str, str]], dict[str, str]):
-    '''
-    Read a GTFS stops.txt file, returning two dicts as follows:
-        - stop_id: (stop_code, stop_name)
-        - stop_code: stop_name
-    '''
-    stops, code_to_name = {}, {}
-
-    # skip file header when receiving the list of lines
-    for line in grab_csv_lines(fp)[1:]:
-        contents = line.split(',')
-        sid = contents[0]
-        scode = contents[1]
-        sname = contents[2]
-        
-        stops[sid] = (scode, sname)
-        code_to_name[scode] = sname
-
-    return stops, code_to_name
-
 def load_csv(fp) -> list:
     '''
     Mar-12-2024 03:04 AM
     '''
     results = []
 
-    for line in grab_csv_lines(fp):
+    for line in gtfs.grab_csv_lines(fp):
         time, trans, prod, li, am, bal, jID, locDisp, _, _, _, ordNum, authCode, tot = line.split(',')
 
         time_grps = re.match("(\w{3})-(\d\d)-(\d{4})\s(\d\d):(\d\d) ([AP])M", time)
@@ -381,33 +234,36 @@ def cleanup_data(counts):
             counts[to_merge[name]] = counts.get(to_merge[name], 0) + counts[name]
             del counts[name]
 
-def calc_top_counts(fp, gtfs):
+def calc_top_counts(fp, system_gtfs):
    '''
    - gtfs is either a path to a gtfs directory, or a  5-tuple
    '''
-   if type(gtfs) == str:
+   if type(system_gtfs) == str:
        with open(os.path.join(gtfs, 'stops.txt')) as stops_fp:
-           _, stops = read_gtfs_stops(stops_fp)
+           _, stops = gtfs.read_gtfs_stops(stops_fp)
    else:
-       stops = gtfs[4]
-   gtfs = read_gtfs_data(gtfs) if type(gtfs) == str else gtfs[:4]
-   lines = get_stop_lines_dict(*gtfs)
+       stops = system_gtfs[4]
+
+   system_gtfs = gtfs.read_gtfs_data(system_gtfs) if type(system_gtfs) == str else system_gtfs
 
    trips = load_csv(fp)
    counts = get_counts(trips)
    cleanup_data(counts)
    top_counts = get_top_counts(counts)
 
-   return top_counts, lines, counts, stops
+   return top_counts, counts
 
 def top_counts_text(fp, gtfs_dir, width = 30):
-   top_counts, lines, _, stops = calc_top_counts(fp, gtfs_dir)
+   top_counts, = calc_top_counts(fp, gtfs_dir)
    print_top_counts(top_counts, stops, width)
 
 def top_counts_img(fp, db: retraceit_db, width = 1000, num = 14):
-   return gen_img(*calc_top_counts(fp, db.gtfs[system_t.TRANSLINK]), db, width = width, num = num)
+   stops = db.gtfs[system_t.TRANSLINK].stop_id_to_code
+   lines = gtfs.get_stop_lines_dict(db.gtfs[system_t.TRANSLINK])
 
-def gen_img(top_counts, lines, counts, stops, db, width = 1000, num = 14,
+   return gen_img(*calc_top_counts(fp, db.gtfs[system_t.TRANSLINK]), lines, stops, db, width = width, num = num)
+
+def gen_img(top_counts, counts, lines, stops, db, width = 1000, num = 14,
             is_desc = True, title = 'Top Transit Stops', 
             category_title = 'Stops used') -> Image:
    '''
@@ -476,11 +332,10 @@ def top_month_counts_text(fp, width = 10):
    top_counts, _ = top_month_counts(fp)
    print_top_counts(top_counts, width = width)
 
-def top_month_counts_img(fp, db, width = 800, out_fname = 'out.png'):
+def top_month_counts_img(fp, db, width = 800):
    top_counts, counts = top_month_counts(fp)
-   gen_img(top_counts, {}, counts, {}, db, width = width, num=len(counts), 
-           is_desc=False, title = "Taps by Month", category_title='Months',
-           out_fname=out_fname)
+   return gen_img(top_counts, counts, {}, {}, db, width = width, num=len(counts), 
+                  is_desc=False, title = "Taps by Month", category_title='Months')
 
 def top_hr_counts(fp, width = 30):
    trips = load_csv(fp)
@@ -488,9 +343,9 @@ def top_hr_counts(fp, width = 30):
    top_counts = sorted(list(counts.items()))
    print_top_counts(top_counts, width = width)
 
-def top_hr_counts_img(fp, db, width = 800, out_fname = 'out.png'):
+def top_hr_counts_img(fp, db, width = 800):
    trips = load_csv(fp)
    counts = get_hr_counts(trips)
    top_counts = [(str(hr), cnt) for hr, cnt in sorted(list(counts.items()))]
-   gen_img(top_counts, {}, counts, {}, db, width = width, num=24, is_desc=False,
-           title='Taps by Hour', category_title=None, out_fname=out_fname)
+   return gen_img(top_counts, counts, {}, {}, db, width = width, num=24, is_desc=False,
+                  title='Taps by Hour', category_title=None)
