@@ -1,5 +1,6 @@
 import re, datetime, os, io, gtfs
 from PIL import Image, ImageDraw, ImageFont
+from collections import namedtuple
 from enum import Enum
 
 MON_TO_NUM = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6, 
@@ -91,6 +92,9 @@ LINE_COLOURS={'99': (208, 65, 16),
               'N35': NIGHTBUS_COLOUR,
              }
 
+Tap = namedtuple('Tap', ['time', 'stn', 'trans', 'product', 'am', 'bal',
+                         'journey_id', 'location_disp', 'ordr_num',  'auth_code'])
+
 class system_t(Enum):
     TRANSLINK = 0
 
@@ -148,14 +152,20 @@ def load_csv(fp) -> list:
         day = int(day)
         mins = int(mins)
         year = int(year)
+        am = float(am.replace('$', '', 1))
+        bal = float(bal.replace('$', '', 1))
         mon_num = MON_TO_NUM[month]
         processed_time = datetime.datetime(year, mon_num, day, hr_24, mins)
 
+        # for now, just skip purchase transactions (since monthly pass purchases
+        # don't have a dollar amount)
+        if 'Purchase' in trans or 'Loaded' in trans: continue
         stn_search = re.search(r".*\sat\s+(?:(.*Stn)|Bus Stop\s(\d+)|(.*Station)|(Lonsdale Quay))\s*", trans)
         stn = "".join([group for group in stn_search.groups() if group]) if stn_search else None
         if not stn: continue
 
-        results.append( (processed_time, stn, prod) )
+        results.append( Tap(processed_time, stn, trans, prod, am, bal,
+                            jID, locDisp, ordNum, authCode) )
     return results
 
 def get_hr_counts(trips):
@@ -164,7 +174,7 @@ def get_hr_counts(trips):
     results = {hr: 0 for hr in range(0, 24)}
 
     for trip in trips:
-        time = trip[0]
+        time = trip.time
 
         results[time.hour] += 1
 
@@ -177,24 +187,29 @@ def get_counts(trips):
     results = {}
 
     for trip in trips:
-        loc = trip[1]
+        loc = trip.stn
 
         if loc in results: results[loc] += 1
         else: results[loc] = 1
     return results
 
-def get_month_counts(trips):
+def get_month_counts(trips, spend=False):
     '''
+    Return a dictionary mapping calendar months that there were taps in the
+    given trips list to either number of taps (if spend=False) or total monthly
+    spend (if spend=True)
+        - Note that costs of any passes are not included in the monthly spend
     '''
     results = {}
 
     for trip in trips:
-        date = trip[0]
+        date = trip.time
         yr, mn = date.year, date.month
         month_str = "%s-%s" % (yr, mn)
 
-        if month_str in results: results[month_str] += 1
-        else: results[month_str] = 1
+        if month_str in results: results[month_str] += 1 if not spend else -1*trip.am
+        else: results[month_str] = 1 if not spend else -1*trip.am
+
     return results
 
 def get_top_counts(counts):
@@ -236,16 +251,11 @@ def cleanup_data(counts):
 
 def calc_top_counts(fp, system_gtfs):
    '''
-   - gtfs is either a path to a gtfs directory, or a  5-tuple
+   Calculate the top counts of the compass log pointed to by fp, returning:
+       - A sorted list of top counts, containing (stop_name, count) tuples in
+         decreasing order of count
+       - A dict of all stop_names to counts
    '''
-   if type(system_gtfs) == str:
-       with open(os.path.join(gtfs, 'stops.txt')) as stops_fp:
-           _, stops = gtfs.read_gtfs_stops(stops_fp)
-   else:
-       stops = system_gtfs[4]
-
-   system_gtfs = gtfs.read_gtfs_data(system_gtfs) if type(system_gtfs) == str else system_gtfs
-
    trips = load_csv(fp)
    counts = get_counts(trips)
    cleanup_data(counts)
@@ -261,11 +271,12 @@ def top_counts_img(fp, db: retraceit_db, width = 1000, num = 14):
    stops = db.gtfs[system_t.TRANSLINK].stop_id_to_code
    lines = gtfs.get_stop_lines_dict(db.gtfs[system_t.TRANSLINK])
 
-   return gen_img(*calc_top_counts(fp, db.gtfs[system_t.TRANSLINK]), lines, stops, db, width = width, num = num)
+   return gen_img(*calc_top_counts(fp, db.gtfs[system_t.TRANSLINK]), lines, stops, 
+                  db, width = width, num = num)
 
 def gen_img(top_counts, counts, lines, stops, db, width = 1000, num = 14,
-            is_desc = True, title = 'Top Transit Stops', 
-            category_title = 'Stops used') -> Image:
+            is_desc = True, title = 'Top Transit Stops', tap_title = 'Taps',
+            category_title = 'Stops used', stat_format = '3d') -> Image:
    '''
    '''
    height = 160+60*num if num < len(top_counts) else 160+60*len(top_counts)
@@ -281,7 +292,7 @@ def gen_img(top_counts, counts, lines, stops, db, width = 1000, num = 14,
 
    total_taps = sum([counts[stop] for stop in counts])
    category_text = '; %s: %s' % (category_title, len(top_counts)) if category_title else ''
-   d.text( (header_text_xpos, 90), "Taps: %s%s" % (total_taps, category_text),
+   d.text( (header_text_xpos, 90), ("%s: %" + stat_format + "%s") % (tap_title, total_taps, category_text),
                       font=db.fnt, fill='white')
 
    idx = 1
@@ -291,7 +302,7 @@ def gen_img(top_counts, counts, lines, stops, db, width = 1000, num = 14,
        stop_name = stops[stop] if stop in stops else stop
        ypos = 100+60*idx
        d.rectangle( (0, ypos, cnt/top_cnt*width, ypos+60 ), fill=(30, 82, 116))
-       d.text( (width-100, ypos), "%3d" % (cnt), font=db.fnt, fill='white')
+       d.text( (width-100, ypos), ("%" + stat_format) % (cnt), font=db.fnt, fill='white')
 
        if stop_name in STN_BULLETS:
            text_xpos = 20 + len(STN_BULLETS[stop_name])*60
@@ -322,9 +333,9 @@ def gen_img(top_counts, counts, lines, stops, db, width = 1000, num = 14,
 
    return img
 
-def top_month_counts(fp):
+def top_month_counts(fp, spend=False):
    trips = load_csv(fp)
-   counts = get_month_counts(trips)
+   counts = get_month_counts(trips, spend=spend)
    top_counts = get_top_counts(counts)
    return top_counts, counts
 
@@ -332,10 +343,20 @@ def top_month_counts_text(fp, width = 10):
    top_counts, _ = top_month_counts(fp)
    print_top_counts(top_counts, width = width)
 
-def top_month_counts_img(fp, db, width = 800):
-   top_counts, counts = top_month_counts(fp)
+def top_month_counts_img(fp, db, width = 800, spend=False):
+   if spend:
+       title = 'Spend by Month ($)'
+       tap_title = 'Total Spend'
+       stat_format = '.2f'
+   else:
+       title = 'Taps by Month'
+       tap_title = 'Taps'
+       stat_format = '3d'
+
+   top_counts, counts = top_month_counts(fp, spend=spend)
    return gen_img(top_counts, counts, {}, {}, db, width = width, num=len(counts), 
-                  is_desc=False, title = "Taps by Month", category_title='Months')
+                  is_desc=False, title = title, tap_title = tap_title,
+                  category_title='Months', stat_format = stat_format)
 
 def top_hr_counts(fp, width = 30):
    trips = load_csv(fp)
