@@ -65,8 +65,10 @@ STN_BULLETS= {'Lougheed Stn': ['expo', 'mil'],
               'Port Coquitlam Stn': ['wce'],
               'Pitt Meadows Stn': ['wce'],
               'Maple Meadows Stn': ['wce'],
-              'Port Haney Stn': ['wce'],
-              'Mission City Stn': ['wce']
+              'Port Haney Station': ['wce'],
+              'Mission City Stn': ['wce'],
+              'Unknown stop (Bowen Island)': ['bus'],
+              'Unknown stop (West Vancouver Municipal Transit)': ['bus']
              }
 
 NIGHTBUS_COLOUR = (0, 12, 66)
@@ -233,7 +235,9 @@ def shorten(string, length = 30):
     return string[:length]
 
 def cleanup_data(counts):
-    to_rename = {'Moody Center Stn': 'Moody Centre Stn'}
+    to_rename = {'Moody Center Stn': 'Moody Centre Stn',
+                 '117': 'Unknown stop (Bowen Island)',
+                 '116': 'Unknown stop (West Vancouver Municipal Transit)'}
     to_merge  = {'Commercial Drive Stn': 'Commercial-Broadway Stn',
                  'Port Coquitlam Station': 'Port Coquitlam Stn',
                  'Port Moody Stn': 'Moody Centre Stn',
